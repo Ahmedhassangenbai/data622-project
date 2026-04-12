@@ -40,6 +40,8 @@ for col in numeric_cols:
         energy_df[col]
         .astype(str)
         .str.replace(",", "", regex=False)
+        .str.replace("$", "", regex=False)  # <-- add this
+        .str.strip()                         # <-- and this
     )
     energy_df[col] = pd.to_numeric(energy_df[col], errors="coerce")
 
