@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 
 from sklearn.linear_model import Ridge
-from sklearn.preprocessing import LabelEncoder
+from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 
@@ -120,7 +120,7 @@ df = df.replace(
 
 
 # =========================
-# Fill Missing Population Features
+# Fill Missing Values
 # =========================
 
 df["Electricity Cost Per Person"] = (
@@ -174,11 +174,12 @@ target = "Electricity Cost Per Person"
 
 
 # =========================
-# Log Transform Target
+# Prepare X and y
 # =========================
 
 X = df[features]
 
+# Log transform target
 y = np.log1p(
     df[target]
 )
@@ -201,6 +202,26 @@ y_train = y[train_mask]
 
 X_test = X[test_mask]
 y_test = y[test_mask]
+
+
+# =========================
+# Scale Features
+# =========================
+
+scaler = StandardScaler()
+
+X_train_scaled = scaler.fit_transform(
+    X_train
+)
+
+X_test_scaled = scaler.transform(
+    X_test
+)
+
+
+# =========================
+# Debug Output
+# =========================
 
 print(
     f"Train size: {X_train.shape[0]} rows"
@@ -226,12 +247,12 @@ print(
 ridge = Ridge(alpha=1.0)
 
 ridge.fit(
-    X_train,
+    X_train_scaled,
     y_train
 )
 
 y_pred_log = ridge.predict(
-    X_test
+    X_test_scaled
 )
 
 
@@ -245,6 +266,17 @@ y_pred = np.expm1(
 
 y_test_actual = np.expm1(
     y_test
+)
+
+
+# =========================
+# Clip Extreme Predictions
+# =========================
+
+y_pred = np.clip(
+    y_pred,
+    0,
+    150
 )
 
 
@@ -315,20 +347,36 @@ results["Residual"] = (
     results["Predicted_Electricity_Cost_Per_Person"]
 )
 
-results.to_csv(
-    "model_predictions.csv",
-    index=False
+
+# =========================
+# Residual Summary
+# =========================
+
+print("\n--- Residual Summary ---")
+
+print(
+    results["Residual"].describe()
 )
 
 
 # =========================
-# Summary Statistics
+# Target Summary
 # =========================
 
 print("\n--- Target Summary ---")
 
 print(
     df[target].describe()
+)
+
+
+# =========================
+# Save CSV
+# =========================
+
+results.to_csv(
+    "model_predictions.csv",
+    index=False
 )
 
 print(
