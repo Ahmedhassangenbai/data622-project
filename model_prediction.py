@@ -165,13 +165,12 @@ features = [
     "Cost_Lag1",
     "KWH_Lag12",
     "Cost_Lag12",
-    "Electricity Cost Per Person",
     "KWH Per Person",
     "Total Population",
     "Borough_Encoded"
 ]
 
-target = "Current Charges"
+target = "Electricity Cost Per Person"
 
 
 # =========================
@@ -307,13 +306,13 @@ results = df[test_mask][[
     target
 ]].copy()
 
-results["Predicted_Current_Charges"] = (
+results["Predicted_Electricity_Cost_Per_Person"] = (
     y_pred
 )
 
 results["Residual"] = (
     results[target] -
-    results["Predicted_Current_Charges"]
+    results["Predicted_Electricity_Cost_Per_Person"]
 )
 
 results.to_csv(
@@ -329,7 +328,7 @@ results.to_csv(
 print("\n--- Target Summary ---")
 
 print(
-    df["Current Charges"].describe()
+    df[target].describe()
 )
 
 print(
