@@ -5,17 +5,18 @@ import pandas as pd
 # =========================
 
 energy_df  = pd.read_csv("Electric_Consumption_And_Cost_(2010_-_Sep_2025)_20260411.csv")
+panel_df   = pd.read_csv("nycha_panel_2016_2024.csv", dtype=str)
 weather_df = pd.read_csv("weather_data_nyc.csv")
-zip_map_df = pd.read_csv("NYCHA_Development_Zip_Mapping_CLEAN.csv")
 
 
 # =========================
-# Energy Data
+# Energy Data - Base Cleaning
 # =========================
 
 energy_df = energy_df[[
     "Borough",
     "Account Name",
+    "AMP #",
     "Revenue Month",
     "Consumption (KWH)",
     "Consumption (KW)",
@@ -24,9 +25,31 @@ energy_df = energy_df[[
     "Current Charges"
 ]]
 
-energy_df["Revenue Month"] = pd.to_datetime(energy_df["Revenue Month"])
-energy_df["Borough"] = energy_df["Borough"].str.strip().str.upper()
-energy_df["Account Name"] = energy_df["Account Name"].str.strip().str.upper()
+energy_df["Revenue Month"] = pd.to_datetime(
+    energy_df["Revenue Month"]
+)
+
+energy_df["Borough"] = (
+    energy_df["Borough"]
+    .astype(str)
+    .str.strip()
+    .str.upper()
+)
+
+energy_df["Account Name"] = (
+    energy_df["Account Name"]
+    .astype(str)
+    .str.strip()
+    .str.upper()
+)
+
+# Clean AMP
+energy_df["AMP_CLEAN"] = (
+    energy_df["AMP #"]
+    .astype(str)
+    .str.replace("P$", "", regex=True)
+    .str.strip()
+)
 
 numeric_cols = [
     "Consumption (KWH)",
@@ -36,8 +59,8 @@ numeric_cols = [
     "Current Charges"
 ]
 
-# Remove commas, dollar signs, whitespace then convert to numeric
 for col in numeric_cols:
+
     energy_df[col] = (
         energy_df[col]
         .astype(str)
@@ -45,75 +68,178 @@ for col in numeric_cols:
         .str.replace("$", "", regex=False)
         .str.strip()
     )
-    energy_df[col] = pd.to_numeric(energy_df[col], errors="coerce")
+
+    energy_df[col] = pd.to_numeric(
+        energy_df[col],
+        errors="coerce"
+    )
+
+
+# =========================
+# Filter Years
+# =========================
+
+energy_df = energy_df[
+    (energy_df["Revenue Month"].dt.year >= 2016) &
+    (energy_df["Revenue Month"].dt.year <= 2024)
+].copy()
+
+energy_df["YEAR"] = (
+    energy_df["Revenue Month"]
+    .dt.year
+    .astype(str)
+)
+
+
+# =========================
+# Prepare NYCHA Panel
+# =========================
+
+panel_df["AMP_CLEAN"] = (
+    panel_df["HUD AMP #"]
+    .astype(str)
+    .str.strip()
+)
+
+panel_df["YEAR"] = (
+    panel_df["YEAR"]
+    .astype(str)
+)
+
+panel_df["TOTAL POPULATION"] = pd.to_numeric(
+    panel_df["TOTAL POPULATION"],
+    errors="coerce"
+)
+
+panel_lookup = (
+    panel_df
+    .groupby(
+        ["AMP_CLEAN", "YEAR"],
+        as_index=False
+    )["TOTAL POPULATION"]
+    .sum()
+)
+
+
+# =========================
+# Merge Energy + Population
+# =========================
+
+energy_df = energy_df.merge(
+    panel_lookup,
+    on=["AMP_CLEAN", "YEAR"],
+    how="inner"
+)
 
 
 # =========================
 # Weather Data
 # =========================
 
-weather_df.columns = ["Month", "Avg_Temp"]
+weather_df["DATE"] = pd.to_datetime(
+    weather_df["DATE"]
+)
 
-weather_df["Month"] = pd.to_datetime(
-    weather_df["Month"].astype(str),
-    format="%Y%m"
+weather_df["TMAX"] = pd.to_numeric(
+    weather_df["TMAX"],
+    errors="coerce"
+)
+
+weather_df["TMIN"] = pd.to_numeric(
+    weather_df["TMIN"],
+    errors="coerce"
+)
+
+# Average temperature
+weather_df["Avg_Temp"] = (
+    weather_df["TMAX"] +
+    weather_df["TMIN"]
+) / 2
+
+# Monthly timestamp
+weather_df["Month"] = (
+    weather_df["DATE"]
+    .dt.to_period("M")
+    .dt.to_timestamp()
+)
+
+# Monthly average weather
+weather_df = (
+    weather_df
+    .groupby("Month")["Avg_Temp"]
+    .mean()
+    .reset_index()
 )
 
 
 # =========================
-# ZIP Mapping
+# Keep Valid Boroughs
 # =========================
 
-zip_map_df.columns = ["Account Name", "Zip Code"]
-zip_map_df["Account Name"] = zip_map_df["Account Name"].str.strip().str.upper()
-zip_map_df["Zip Code"] = (
-    zip_map_df["Zip Code"]
-    .astype(str)
-    .str.replace(r'\.0$', '', regex=True)
-    .str.strip()
+valid_boroughs = [
+    "BRONX",
+    "BROOKLYN",
+    "MANHATTAN",
+    "QUEENS",
+    "STATEN ISLAND"
+]
+
+energy_df = energy_df[
+    energy_df["Borough"].isin(valid_boroughs)
+]
+
+
+# =========================
+# Create Month Column
+# =========================
+
+energy_df["Month"] = (
+    energy_df["Revenue Month"]
+    .dt.to_period("M")
+    .dt.to_timestamp()
 )
 
-# Drop rows with missing ZIP
-zip_map_df = zip_map_df.dropna(subset=["Zip Code"])
-zip_map_df = zip_map_df[zip_map_df["Zip Code"] != '']
-
 
 # =========================
-# Merge Energy + ZIP
+# Aggregate Monthly by Borough
 # =========================
 
-energy_df = energy_df.merge(
-    zip_map_df,
-    on="Account Name",
-    how="left"
+final_df = (
+    energy_df
+    .groupby([
+        "Borough",
+        "Month"
+    ])
+    .agg({
+        "Consumption (KWH)": "sum",
+        "Consumption (KW)": "sum",
+        "KWH Charges": "sum",
+        "KW Charges": "sum",
+        "Current Charges": "sum",
+        "TOTAL POPULATION": "sum"
+    })
+    .reset_index()
 )
 
-# Keep only valid boroughs
-valid_boroughs = ["BRONX", "BROOKLYN", "MANHATTAN", "QUEENS", "STATEN ISLAND"]
-energy_df = energy_df[energy_df["Borough"].isin(valid_boroughs)]
-
-# Create Month column
-energy_df["Month"] = energy_df["Revenue Month"].dt.to_period("M").dt.to_timestamp()
-
-# Drop rows where ZIP could not be mapped
-energy_df = energy_df.dropna(subset=["Zip Code"])
+final_df = final_df.sort_values([
+    "Borough",
+    "Month"
+]).reset_index(drop=True)
 
 
 # =========================
-# Aggregate Monthly by ZIP
-# If multiple developments share the same ZIP + Month,
-# we take the average across those developments
+# Rename Population Column
 # =========================
 
-final_df = energy_df.groupby(
-    ["Borough", "Zip Code", "Month"]
-)[numeric_cols].mean().reset_index()
-
-final_df = final_df.sort_values(["Borough", "Zip Code", "Month"]).reset_index(drop=True)
+final_df = final_df.rename(
+    columns={
+        "TOTAL POPULATION": "Total Population"
+    }
+)
 
 
 # =========================
-# Merge with Weather
+# Merge Weather
 # =========================
 
 final_df = final_df.merge(
@@ -124,11 +250,25 @@ final_df = final_df.merge(
 
 
 # =========================
-# Reorder Columns
+# Create Per Person Metrics
+# =========================
+
+final_df["Electricity Cost Per Person"] = (
+    final_df["Current Charges"] /
+    final_df["Total Population"]
+)
+
+final_df["KWH Per Person"] = (
+    final_df["Consumption (KWH)"] /
+    final_df["Total Population"]
+)
+
+
+# =========================
+# Final Columns
 # =========================
 
 final_df = final_df[[
-    "Zip Code",
     "Borough",
     "Month",
     "Consumption (KWH)",
@@ -136,17 +276,60 @@ final_df = final_df[[
     "KWH Charges",
     "KW Charges",
     "Current Charges",
+    "Total Population",
+    "Electricity Cost Per Person",
+    "KWH Per Person",
     "Avg_Temp"
 ]]
 
 
 # =========================
-# Save Final
+# Save Final CSV
 # =========================
 
-final_df.to_csv("final_merged_energy_weather.csv", index=False)
+final_df.to_csv(
+    "final_merged_energy_weather_population.csv",
+    index=False
+)
 
-print(f"Final shape: {final_df.shape}")
-print(f"Unique ZIP codes: {final_df['Zip Code'].nunique()}")
-print(f"Date range: {final_df['Month'].min()} to {final_df['Month'].max()}")
-print(final_df.head(10).to_string())
+
+# =========================
+# Final Debug
+# =========================
+
+print("\n=========================")
+print("FINAL OUTPUT")
+print("=========================")
+
+print(
+    "Final shape:",
+    final_df.shape
+)
+
+print(
+    "Unique boroughs:",
+    final_df["Borough"].nunique()
+)
+
+print(
+    "Date range:",
+    final_df["Month"].min(),
+    "to",
+    final_df["Month"].max()
+)
+
+print(
+    "\nMissing values:"
+)
+
+print(
+    final_df.isna().sum()
+)
+
+print(
+    "\nFirst 10 rows:"
+)
+
+print(
+    final_df.head(10).to_string()
+)
